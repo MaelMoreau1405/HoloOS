@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>HoloOS // Multiverse Inc.</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600&display=swap" rel="stylesheet">
+<style>
+body {
+  margin:0; overflow:hidden; background:#000;
+  color:#0ff; font-family:'Orbitron',monospace;
+}
+/* Curseur principal */
+#cursor {
+  position:absolute; width:50px; height:50px;
+  border:2px solid #0ff; border-radius:50%;
+  transform:translate(-50%,-50%); pointer-events:none;
+}
+#fill {
+  position:absolute; width:46px; height:46px; top:2px; left:2px;
+  clip-path:circle(0% at center);
+  background:#0ff6; border-radius:50%;
+  transition:clip-path 0.1s linear;
+}
+/* Fenêtres */
+.window {
+  position:absolute; border:2px solid #0ff;
+  border-radius:5px; background:rgba(0,40,60,0.6);
+  box-shadow:0 0 15px #0ff8; display:none;
+}
+.header {font-size:12px;text-align:center;border-bottom:1px solid #0ff;}
+textarea {background:#022;color:#0f0;width:100%;height:100%;border:none;}
+button.play-btn {
+  background:none;color:#0ff;border:1px solid #0ff;font-family:'Orbitron';
+  border-radius:4px;padding:5px 10px;
+}
+/* Dock */
+#dock {
+  position:fixed; bottom:20px; left:50%;
+  transform:translateX(-50%); display:flex; gap:20px;
+}
+.dock-icon {
+  width:90px; height:90px; border:1px solid #044; border-radius:10px;
+  text-align:center; background:rgba(0,255,255,0.08);
+  display:flex; flex-direction:column; justify-content:center; align-items:center;
+  font-size:13px;
+}
+/* Splash screens */
+#splash1,#splash2 {
+  position:fixed; inset:0; background:#000;
+  display:flex; align-items:center; justify-content:center;
+  color:#0ff; font-size:3em; letter-spacing:3px;
+  z-index:999; transition:opacity 1s ease;
+}
+.hidden {opacity:0; pointer-events:none;}
+</style>
+</head>
+<body>
+
+<!-- Splash -->
+<div id="splash1">HOLO OS</div>
+<div id="splash2" style="opacity:0;">By Multiverse Inc.</div>
+
+<div id="ui" style="display:none;">
+  <div id="cursor"><div id="fill"></div></div>
+
+  <div id="dock">
+    <div class="dock-icon" id="icon-clock">🕒<br>Horloge</div>
+    <div class="dock-icon" id="icon-system">💻<br>Système</div>
+    <div class="dock-icon" id="icon-notes">📝<br>Notes</div>
+    <div class="dock-icon" id="icon-weather">🌤️<br>Météo</div>
+    <div class="dock-icon" id="icon-music">🎵<br>Musique</div>
+  </div>
+
+  <!-- Fenêtres -->
+  <div class="window" id="win-clock" style="width:150px;height:80px;">
+    <div class="header">HORLOGE</div>
+    <div id="clock" style="text-align:center;padding:5px;"></div>
+  </div>
+
+  <div class="window" id="win-system" style="width:200px;height:90px;">
+    <div class="header">SYSTÈME</div>
+    <div id="sysinfo" style="padding:5px;"></div>
+  </div>
+
+  <div class="window" id="win-notes" style="width:250px;height:150px;">
+    <div class="header">NOTES</div>
+    <textarea id="notes"></textarea>
+  </div>
+
+  <div class="window" id="win-weather" style="width:200px;height:100px;">
+    <div class="header">MÉTÉO</div>
+    <div id="meteo" style="padding:5px;"></div>
+  </div>
+
+  <div class="window" id="win-music" style="width:180px;height:100px;">
+    <div class="header">MUSIQUE</div>
+    <div style="text-align:center;padding:10px;">
+      <button class="play-btn" id="playBtn">LECTURE</button>
+      <audio id="bgm" loop>
+        <source src="https://audio.jukehost.co.uk/dqr32EiJ3eFkzU9dysUPVvLexdJQDf2B" type="audio/mpeg">
+      </audio>
+    </div>
+  </div>
+</div>
+
+<script>
+const socket=io();
+const cursor=document.getElementById('cursor');
+const fill=document.getElementById('fill');
+const windows=document.querySelectorAll('.window');
+const dockIcons=document.querySelectorAll('.dock-icon');
+const audio=document.getElementById('bgm');
+const playBtn=document.getElementById('playBtn');
+const vw=1920,vh=1080;
+
+let grabbed=null,offsetX=0,offsetY=0;
+const HOLD_TIME=3000;
+let target=null; let holdStart=null; let holding=false;
+
+// 🌟 Splash sequence corrigée
+setTimeout(()=>{
+  const s1=document.getElementById('splash1');
+  const s2=document.getElementById('splash2');
+  s1.classList.add('hidden');
+  setTimeout(()=>{
+    s1.style.display='none';
+    s2.style.opacity=1;
+    setTimeout(()=>{
+      s2.classList.add('hidden');
+      setTimeout(()=>{
+        s2.style.display='none';
+        document.getElementById('ui').style.display='block';
+      },1000);
+    },1500);
+  },1000);
+},1500);
+
+// Données
+setInterval(()=>{document.getElementById('clock').textContent=new Date().toLocaleTimeString();},1000);
+async function updateSystem(){
+  const data=await fetch('/system').then(r=>r.json());
+  document.getElementById('sysinfo').innerHTML=`CPU : ${data.cpu}%<br>RAM : ${data.ram}%<br>IP : ${data.ip}`;
+}
+setInterval(updateSystem,3000);
+async function updateWeather(){
+  try{
+    const r=await fetch("https://api.open-meteo.com/v1/forecast?latitude=43.30&longitude=5.37&current=temperature_2m&timezone=auto");
+    const j=await r.json();
+    document.getElementById('meteo').textContent=`${j.current.temperature_2m}°C - Marseille`;
+  }catch{document.getElementById('meteo').textContent="Erreur";}
+}
+updateWeather();
+
+// Fonctions
+function detectHit(px,py,el){
+  const r=el.getBoundingClientRect();
+  return px>r.left&&px<r.right&&py>r.top&&py<r.bottom;
+}
+function toggleWindow(id){
+  const el=document.getElementById(id);
+  if(el.style.display==="block") el.style.display="none";
+  else{
+    el.style.display="block";
+    el.style.left=(window.innerWidth/2 - el.offsetWidth/2)+"px";
+    el.style.top=(window.innerHeight/2 - el.offsetHeight/2)+"px";
+  }
+}
+function toggleMusic(){
+  if(audio.paused){audio.play(); playBtn.textContent="⏸";}
+  else {audio.pause(); playBtn.textContent="▶";}
+}
+
+// Gestuelle
+socket.on("hand_state",({state,x,y})=>{
+  const px=(x/vw)*window.innerWidth;
+  const py=(y/vh)*window.innerHeight;
+  cursor.style.left=px+"px"; cursor.style.top=py+"px";
+  cursor.style.borderColor=(state==="open")?"#0ff":"#f03";
+
+  if(state==="closed"){ // drag
+    holdStart=null; fill.style.clipPath='circle(0%)';
+    if(!grabbed){
+      windows.forEach(w=>{
+        if(w.style.display==="block" && detectHit(px,py,w)){
+          grabbed=w;
+          const r=w.getBoundingClientRect();
+          offsetX=px-r.left; offsetY=py-r.top;
+        }
+      });
+    }
+    if(grabbed){
+      grabbed.style.left=(px-offsetX)+"px";
+      grabbed.style.top=(py-offsetY)+"px";
+    }
+  } else {
+    if(grabbed){ grabbed=null; }  // relâche le drag
+    // Maintien ouvert = clic
+    if(!holding){
+      let t=null;
+      dockIcons.forEach(ic=>{if(detectHit(px,py,ic)) t=ic;});
+      const musicWin=document.getElementById('win-music');
+      if(musicWin.style.display==="block" && detectHit(px,py,musicWin)) t=musicWin;
+      if(t!==target){target=t; holdStart=null; fill.style.clipPath='circle(0%)';}
+      if(target){
+        if(!holdStart) holdStart=performance.now();
+        const elapsed=performance.now()-holdStart;
+        const prog=Math.min(elapsed/HOLD_TIME,1);
+        fill.style.clipPath=`circle(${prog*50}% at center)`;
+        if(prog>=1){
+          holding=true;
+          if(target.classList.contains('dock-icon')){
+            const winId="win-"+target.id.split('-')[1];
+            toggleWindow(winId);
+          } else if(target.id==="win-music"){toggleMusic();}
+          setTimeout(()=>{
+            holding=false;holdStart=null;fill.style.clipPath='circle(0%)';
+          },400);
+        }
+      } else fill.style.clipPath='circle(0%)';
+    }
+  }
+});
+</script>
+</body>
+</html>
